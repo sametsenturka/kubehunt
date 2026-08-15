@@ -1,0 +1,12 @@
+.idea/
+
+# Local build outputs
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Local coverage and profiles
+coverage.out
+*.prof
