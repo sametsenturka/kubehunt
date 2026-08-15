@@ -1,5 +1,9 @@
 .idea/
 
+# Local engineering and architecture notes
+/AGENTS.md
+/docs/
+
 # Local build outputs
 /bin/
 /dist/
