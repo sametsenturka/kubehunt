@@ -48,11 +48,11 @@ func newScanClusterCommand(scanner app.ClusterScanner, output io.Writer) *cobra.
 			if scanner == nil {
 				return fmt.Errorf("scan cluster: scanner is not configured")
 			}
-			state, err := scanner.Scan(command.Context(), options)
+			result, err := scanner.Scan(command.Context(), options)
 			if err != nil {
 				return err
 			}
-			if err := (terminal.InventoryReporter{}).Render(output, state); err != nil {
+			if err := (terminal.ScanReporter{}).Render(output, result); err != nil {
 				return fmt.Errorf("scan cluster: %w", err)
 			}
 			return nil

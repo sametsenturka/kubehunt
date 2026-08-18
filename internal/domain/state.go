@@ -116,6 +116,7 @@ type PodTemplate struct {
 }
 
 type PodSpec struct {
+	OSName                       string
 	ServiceAccountName           string
 	AutomountServiceAccountToken *bool
 	NodeName                     string
@@ -139,8 +140,15 @@ type Container struct {
 	Name            string
 	Image           string
 	SecurityContext ContainerSecurityContext
+	VolumeMounts    []VolumeMount
 	Limits          map[string]string
 	Requests        map[string]string
+}
+
+type VolumeMount struct {
+	Name      string
+	ReadOnly  bool
+	MountPath string
 }
 
 type ContainerSecurityContext struct {

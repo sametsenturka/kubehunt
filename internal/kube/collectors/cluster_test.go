@@ -62,6 +62,9 @@ func TestClusterCollectorCollectsAndNormalizesInventory(t *testing.T) {
 	if got := state.Pods[0].Spec.Containers[0].SecurityContext.Privileged; got == nil || !*got {
 		t.Errorf("privileged setting was not normalized: %#v", got)
 	}
+	if mounts := state.Pods[0].Spec.Containers[0].VolumeMounts; len(mounts) != 1 || mounts[0].Name != "host" || mounts[0].MountPath != "/host" || !mounts[0].ReadOnly {
+		t.Errorf("volume mounts were not normalized: %#v", mounts)
+	}
 	if got := state.Deployments[0].Template.Spec.Containers[0].Image; got != "example/app:1" {
 		t.Errorf("deployment container image = %q", got)
 	}
@@ -110,12 +113,13 @@ func TestClusterCollectorReturnsContextualCollectionErrors(t *testing.T) {
 func inventoryObjects(privileged *bool) []runtime.Object {
 	selector := metav1.LabelSelector{MatchLabels: map[string]string{"app": "demo"}}
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{{
-		Name:  "app",
-		Image: "example/app:1",
+		Name:         "app",
+		Image:        "example/app:1",
+		VolumeMounts: []corev1.VolumeMount{{Name: "host", MountPath: "/host", ReadOnly: true}},
 		SecurityContext: &corev1.SecurityContext{
 			Privileged: privileged,
 		},
-	}}}
+	}}, Volumes: []corev1.Volume{{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/etc"}}}}}
 	return []runtime.Object{
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-b"}},

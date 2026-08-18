@@ -13,26 +13,26 @@ import (
 )
 
 type recordingScanner struct {
-	state   domain.ClusterState
+	result  domain.ScanResult
 	err     error
 	options app.ScanOptions
 	called  bool
 }
 
-func (scanner *recordingScanner) Scan(_ context.Context, options app.ScanOptions) (domain.ClusterState, error) {
+func (scanner *recordingScanner) Scan(_ context.Context, options app.ScanOptions) (domain.ScanResult, error) {
 	scanner.called = true
 	scanner.options = options
-	return scanner.state, scanner.err
+	return scanner.result, scanner.err
 }
 
 func TestScanClusterCommandPassesScopeAndPrintsInventory(t *testing.T) {
 	t.Parallel()
 
-	scanner := &recordingScanner{state: domain.ClusterState{
+	scanner := &recordingScanner{result: domain.ScanResult{State: domain.ClusterState{
 		Cluster:    domain.ClusterMetadata{Name: "minikube"},
 		Namespaces: make([]domain.Namespace, 2),
 		Pods:       make([]domain.Pod, 3),
-	}}
+	}}}
 	var output bytes.Buffer
 	command := newRootCommand(scanner, &output)
 	command.SetArgs([]string{

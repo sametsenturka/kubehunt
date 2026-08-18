@@ -109,7 +109,12 @@ func normalizePodSpec(spec corev1.PodSpec) domain.PodSpec {
 		}
 	}
 
+	osName := ""
+	if spec.OS != nil {
+		osName = string(spec.OS.Name)
+	}
 	return domain.PodSpec{
+		OSName:                       osName,
 		ServiceAccountName:           spec.ServiceAccountName,
 		AutomountServiceAccountToken: copyBool(spec.AutomountServiceAccountToken),
 		NodeName:                     spec.NodeName,
@@ -129,6 +134,7 @@ func normalizeContainer(container corev1.Container) domain.Container {
 		Name:            container.Name,
 		Image:           container.Image,
 		SecurityContext: normalizeContainerSecurityContext(container.SecurityContext),
+		VolumeMounts:    normalizeVolumeMounts(container.VolumeMounts),
 		Limits:          normalizeResourceList(container.Resources.Limits),
 		Requests:        normalizeResourceList(container.Resources.Requests),
 	}
@@ -139,7 +145,16 @@ func normalizeEphemeralContainer(container corev1.EphemeralContainer) domain.Con
 		Name:            container.Name,
 		Image:           container.Image,
 		SecurityContext: normalizeContainerSecurityContext(container.SecurityContext),
+		VolumeMounts:    normalizeVolumeMounts(container.VolumeMounts),
 	}
+}
+
+func normalizeVolumeMounts(mounts []corev1.VolumeMount) []domain.VolumeMount {
+	result := make([]domain.VolumeMount, 0, len(mounts))
+	for _, mount := range mounts {
+		result = append(result, domain.VolumeMount{Name: mount.Name, MountPath: mount.MountPath, ReadOnly: mount.ReadOnly})
+	}
+	return result
 }
 
 func normalizeContainerSecurityContext(context *corev1.SecurityContext) domain.ContainerSecurityContext {
