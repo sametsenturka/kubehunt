@@ -10,6 +10,12 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/rbac"
 )
 
+type Builder struct{}
+
+func (Builder) Build(state domain.ClusterState, findings []domain.Finding) (*model.Graph, error) {
+	return Build(state, findings)
+}
+
 func Build(state domain.ClusterState, findings []domain.Finding) (*model.Graph, error) {
 	graph := model.New()
 	clusterKey := model.ClusterKey(state.Cluster)
@@ -124,7 +130,8 @@ func addOwnershipEdges(graph *model.Graph, clusterKey string, state domain.Clust
 					continue
 				}
 				discriminator := owner.Kind + "\x00" + owner.Name
-				if err := addEdge(graph, model.ResourceNodeID(clusterKey, ownerRef), podID, model.EdgeCreates, model.ConfidenceConfirmed, discriminator, nil); err != nil {
+				evidence := domain.Evidence{Field: "metadata.ownerReferences", Value: owner.Kind + "/" + owner.Name, Message: fmt.Sprintf("Pod %q has controller owner %s/%s", pod.Metadata.Name, owner.Kind, owner.Name)}
+				if err := addEdge(graph, model.ResourceNodeID(clusterKey, ownerRef), podID, model.EdgeCreates, model.ConfidenceConfirmed, discriminator, nil, evidence); err != nil {
 					return err
 				}
 			case "ReplicaSet":
@@ -134,7 +141,8 @@ func addOwnershipEdges(graph *model.Graph, clusterKey string, state domain.Clust
 					}
 					ref := resourceReference("apps/v1", "Deployment", deployment.Metadata)
 					attributes := map[string]string{"via_owner_kind": "ReplicaSet", "via_owner_name": owner.Name}
-					if err := addEdge(graph, model.ResourceNodeID(clusterKey, ref), podID, model.EdgeCreates, model.ConfidenceInferred, owner.Kind+"\x00"+owner.Name, attributes); err != nil {
+					evidence := domain.Evidence{Field: "metadata.ownerReferences+spec.selector", Value: owner.Kind + "/" + owner.Name, Message: fmt.Sprintf("Pod %q is owned by ReplicaSet %q and matches Deployment %q selector", pod.Metadata.Name, owner.Name, deployment.Metadata.Name)}
+					if err := addEdge(graph, model.ResourceNodeID(clusterKey, ref), podID, model.EdgeCreates, model.ConfidenceInferred, owner.Kind+"\x00"+owner.Name, attributes, evidence); err != nil {
 						return err
 					}
 				}
@@ -178,7 +186,16 @@ func addUsesServiceAccount(graph *model.Graph, clusterKey string, source domain.
 	if err := ensureResourceNode(graph, clusterKey, target); err != nil {
 		return err
 	}
-	return addEdge(graph, model.ResourceNodeID(clusterKey, source), model.ResourceNodeID(clusterKey, target), model.EdgeUses, model.ConfidenceConfirmed, sourceType, map[string]string{"source": sourceType})
+	field := "spec.serviceAccountName"
+	if sourceType == "template" {
+		field = "spec.template.spec.serviceAccountName"
+	}
+	value := spec.ServiceAccountName
+	if value == "" {
+		value = "<default>"
+	}
+	evidence := domain.Evidence{Field: field, Value: value, Message: fmt.Sprintf("%s/%s uses ServiceAccount %q", source.Kind, source.Name, name)}
+	return addEdge(graph, model.ResourceNodeID(clusterKey, source), model.ResourceNodeID(clusterKey, target), model.EdgeUses, model.ConfidenceConfirmed, sourceType, map[string]string{"source": sourceType}, evidence)
 }
 
 func addRBACEdges(graph *model.Graph, clusterKey string, effective rbac.Model) error {
@@ -199,14 +216,17 @@ func addRBACEdges(graph *model.Graph, clusterKey string, effective rbac.Model) e
 		}
 		bindingID := model.ResourceNodeID(clusterKey, assignment.Binding)
 		roleID := model.ResourceNodeID(clusterKey, assignment.Role)
-		if err := addEdge(graph, subjectID, bindingID, model.EdgeBoundVia, confidence, "", map[string]string{"subject_valid": fmt.Sprint(assignment.SubjectValid)}); err != nil {
+		subjectValue := strings.Join([]string{assignment.Subject.APIGroup, assignment.Subject.Kind, assignment.Subject.Namespace, assignment.Subject.Name}, "/")
+		boundEvidence := domain.Evidence{Field: "subjects", Value: subjectValue, Message: fmt.Sprintf("%s/%s contains subject %s %q", assignment.Binding.Kind, assignment.Binding.Name, assignment.Subject.Kind, assignment.Subject.DisplayName())}
+		if err := addEdge(graph, subjectID, bindingID, model.EdgeBoundVia, confidence, "", map[string]string{"subject_valid": fmt.Sprint(assignment.SubjectValid)}, boundEvidence); err != nil {
 			return err
 		}
 		confidence = model.ConfidenceConfirmed
 		if !assignment.RoleResolved {
 			confidence = model.ConfidenceUnknown
 		}
-		if err := addEdge(graph, bindingID, roleID, model.EdgeReferences, confidence, "", map[string]string{"role_resolved": fmt.Sprint(assignment.RoleResolved)}); err != nil {
+		referenceEvidence := domain.Evidence{Field: "roleRef", Value: assignment.Role.Kind + "/" + assignment.Role.Name, Message: fmt.Sprintf("%s/%s references %s/%s", assignment.Binding.Kind, assignment.Binding.Name, assignment.Role.Kind, assignment.Role.Name)}
+		if err := addEdge(graph, bindingID, roleID, model.EdgeReferences, confidence, "", map[string]string{"role_resolved": fmt.Sprint(assignment.RoleResolved)}, referenceEvidence); err != nil {
 			return err
 		}
 		if !assignment.SubjectValid || !assignment.RoleResolved {
@@ -256,7 +276,8 @@ func addPermissionEdges(graph *model.Graph, clusterKey string, assignment rbac.A
 				"sources":        permissionSources(permission.Sources),
 			}
 			discriminator := strings.Join([]string{string(bindingID), permission.Canonical(), apiGroup, resource}, "\x00")
-			if err := addEdge(graph, roleID, targetID, model.EdgePermits, model.ConfidenceConfirmed, discriminator, attributes); err != nil {
+			evidence := domain.Evidence{Field: "rules", Value: permission.Canonical(), Message: fmt.Sprintf("%s/%s permits verbs %q on %s/%s through %s/%s", assignment.Role.Kind, assignment.Role.Name, canonicalStrings(permission.Verbs), apiGroup, resource, assignment.Binding.Kind, assignment.Binding.Name)}
+			if err := addEdge(graph, roleID, targetID, model.EdgePermits, model.ConfidenceConfirmed, discriminator, attributes, evidence); err != nil {
 				return err
 			}
 		}
@@ -271,7 +292,8 @@ func addPermissionEdges(graph *model.Graph, clusterKey string, assignment rbac.A
 		}
 		attributes := map[string]string{"verbs": canonicalStrings(permission.Verbs), "binding_id": string(bindingID), "scope": string(rbac.ScopeCluster), "sources": permissionSources(permission.Sources)}
 		discriminator := strings.Join([]string{string(bindingID), permission.Canonical(), resourceURL}, "\x00")
-		if err := addEdge(graph, roleID, targetID, model.EdgePermits, model.ConfidenceConfirmed, discriminator, attributes); err != nil {
+		evidence := domain.Evidence{Field: "rules", Value: permission.Canonical(), Message: fmt.Sprintf("%s/%s permits verbs %q on non-resource URL %q through %s/%s", assignment.Role.Kind, assignment.Role.Name, canonicalStrings(permission.Verbs), resourceURL, assignment.Binding.Kind, assignment.Binding.Name)}
+		if err := addEdge(graph, roleID, targetID, model.EdgePermits, model.ConfidenceConfirmed, discriminator, attributes, evidence); err != nil {
 			return err
 		}
 	}
@@ -287,14 +309,16 @@ func addServiceEdges(graph *model.Graph, clusterKey string, state domain.Cluster
 		for _, pod := range state.Pods {
 			if pod.Metadata.Namespace == service.Metadata.Namespace && labelsMatch(service.Selector, pod.Metadata.Labels) {
 				ref := resourceReference("v1", "Pod", pod.Metadata)
-				if err := addEdge(graph, serviceID, model.ResourceNodeID(clusterKey, ref), model.EdgeExposes, model.ConfidenceConfirmed, "pod", map[string]string{"selection": "observed_pod"}); err != nil {
+				evidence := domain.Evidence{Field: "spec.selector", Value: canonicalLabels(service.Selector), Message: fmt.Sprintf("Service %q selector matches observed Pod %q", service.Metadata.Name, pod.Metadata.Name)}
+				if err := addEdge(graph, serviceID, model.ResourceNodeID(clusterKey, ref), model.EdgeExposes, model.ConfidenceConfirmed, "pod", map[string]string{"selection": "observed_pod"}, evidence); err != nil {
 					return err
 				}
 			}
 		}
 		for _, target := range workloadTargets(state) {
 			if target.ref.Namespace == service.Metadata.Namespace && labelsMatch(service.Selector, target.labels) {
-				if err := addEdge(graph, serviceID, model.ResourceNodeID(clusterKey, target.ref), model.EdgeExposes, model.ConfidenceInferred, "template", map[string]string{"selection": "workload_template"}); err != nil {
+				evidence := domain.Evidence{Field: "spec.selector+spec.template.metadata.labels", Value: canonicalLabels(service.Selector), Message: fmt.Sprintf("Service %q selector matches %s/%s template labels", service.Metadata.Name, target.ref.Kind, target.ref.Name)}
+				if err := addEdge(graph, serviceID, model.ResourceNodeID(clusterKey, target.ref), model.EdgeExposes, model.ConfidenceInferred, "template", map[string]string{"selection": "workload_template"}, evidence); err != nil {
 					return err
 				}
 			}
@@ -332,7 +356,12 @@ func addIngressServiceEdge(graph *model.Graph, clusterKey string, from model.Nod
 	}
 	attributes := map[string]string{"host": host, "path": path, "service_port": backend.ServicePort}
 	discriminator := strings.Join([]string{host, path, backend.ServiceName, backend.ServicePort}, "\x00")
-	return addEdge(graph, from, model.ResourceNodeID(clusterKey, target), model.EdgeRoutesTo, model.ConfidenceConfirmed, discriminator, attributes)
+	field := "spec.defaultBackend.service"
+	if host != "" || path != "" {
+		field = "spec.rules.http.paths.backend.service"
+	}
+	evidence := domain.Evidence{Field: field, Value: backend.ServiceName + ":" + backend.ServicePort, Message: fmt.Sprintf("Ingress backend routes host %q path %q to Service %q", host, path, backend.ServiceName)}
+	return addEdge(graph, from, model.ResourceNodeID(clusterKey, target), model.EdgeRoutesTo, model.ConfidenceConfirmed, discriminator, attributes, evidence)
 }
 
 func addNetworkPolicyEdges(graph *model.Graph, clusterKey string, state domain.ClusterState) error {
@@ -343,7 +372,8 @@ func addNetworkPolicyEdges(graph *model.Graph, clusterKey string, state domain.C
 				continue
 			}
 			to := model.ResourceNodeID(clusterKey, resourceReference("v1", "Pod", pod.Metadata))
-			if err := addEdge(graph, from, to, model.EdgeSelects, model.ConfidenceConfirmed, "", map[string]string{"policy_types": canonicalStrings(policy.PolicyTypes)}); err != nil {
+			evidence := domain.Evidence{Field: "spec.podSelector", Value: canonicalLabelSelector(policy.PodSelector), Message: fmt.Sprintf("NetworkPolicy %q podSelector matches Pod %q", policy.Metadata.Name, pod.Metadata.Name)}
+			if err := addEdge(graph, from, to, model.EdgeSelects, model.ConfidenceConfirmed, "", map[string]string{"policy_types": canonicalStrings(policy.PolicyTypes)}, evidence); err != nil {
 				return err
 			}
 		}
@@ -399,8 +429,8 @@ func ensureSubjectNode(graph *model.Graph, clusterKey string, assignment rbac.As
 	return id, err
 }
 
-func addEdge(graph *model.Graph, from, to model.NodeID, edgeType model.EdgeType, confidence model.Confidence, discriminator string, attributes map[string]string) error {
-	return graph.AddEdge(model.Edge{ID: model.StableEdgeID(from, edgeType, to, discriminator), From: from, To: to, Type: edgeType, Confidence: confidence, Attributes: attributes})
+func addEdge(graph *model.Graph, from, to model.NodeID, edgeType model.EdgeType, confidence model.Confidence, discriminator string, attributes map[string]string, evidence ...domain.Evidence) error {
+	return graph.AddEdge(model.Edge{ID: model.StableEdgeID(from, edgeType, to, discriminator), From: from, To: to, Type: edgeType, Confidence: confidence, Attributes: attributes, Evidence: evidence})
 }
 
 func resourceReference(apiVersion, kind string, metadata domain.Metadata) domain.ResourceReference {
@@ -484,6 +514,28 @@ func canonicalStrings(values []string) string {
 		}
 	}
 	return strings.Join(unique, ",")
+}
+
+func canonicalLabels(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, key+"="+labels[key])
+	}
+	return strings.Join(values, ",")
+}
+
+func canonicalLabelSelector(selector domain.LabelSelector) string {
+	values := []string{canonicalLabels(selector.MatchLabels)}
+	for _, expression := range selector.MatchExpressions {
+		values = append(values, expression.Key+":"+expression.Operator+":"+canonicalStrings(expression.Values))
+	}
+	sort.Strings(values)
+	return strings.Join(values, ";")
 }
 
 func permissionSources(sources []rbac.PermissionSource) string {

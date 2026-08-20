@@ -21,6 +21,11 @@ func TestBuildCreatesKubernetesSecurityRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build graph: %v", err)
 	}
+	for _, edge := range graph.Edges() {
+		if len(edge.Evidence) == 0 {
+			t.Errorf("edge %s (%s) has no derivation evidence", edge.ID, edge.Type)
+		}
+	}
 
 	clusterKey := model.ClusterKey(state.Cluster)
 	deployment := resourceID(clusterKey, "apps/v1", "Deployment", "production", "api")

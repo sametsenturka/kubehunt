@@ -64,19 +64,53 @@ type RiskScore struct {
 	Factors map[string]int
 }
 
-type Finding struct {
+// AttackPathNode is a report-safe projection of a graph node. Resource is nil
+// for abstract authorization targets such as API resources.
+type AttackPathNode struct {
+	ID         string
+	Type       string
+	Kind       string
+	Resource   *ResourceReference
+	Attributes map[string]string
+}
+
+type AttackPathStep struct {
+	EdgeID       string
+	From         AttackPathNode
+	Relationship string
+	To           AttackPathNode
+	Confidence   string
+	Evidence     []Evidence
+}
+
+// SupportingFinding is deliberately non-recursive: it carries the facts used
+// by a correlation without embedding another complete Finding.
+type SupportingFinding struct {
 	Fingerprint  string
 	RuleID       string
 	Title        string
 	Severity     Severity
 	Resource     ResourceReference
-	Namespace    string
 	Evidence     []Evidence
-	Description  string
-	Remediation  string
 	PrimaryOWASP OWASPCategory
-	RelatedOWASP []OWASPCategory
-	RiskScore    *RiskScore
+}
+
+type Finding struct {
+	Fingerprint        string
+	RuleID             string
+	Title              string
+	Severity           Severity
+	Resource           ResourceReference
+	Namespace          string
+	Evidence           []Evidence
+	Description        string
+	Remediation        string
+	PrimaryOWASP       OWASPCategory
+	RelatedOWASP       []OWASPCategory
+	RiskScore          *RiskScore
+	AttackPath         []AttackPathStep
+	AffectedResources  []ResourceReference
+	SupportingFindings []SupportingFinding
 }
 
 type ScanResult struct {

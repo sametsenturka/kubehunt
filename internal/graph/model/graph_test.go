@@ -46,7 +46,10 @@ func TestGraphIndexesDirectionAndFindingAttachments(t *testing.T) {
 	if err := graph.AddNode(serviceAccount); err != nil {
 		t.Fatalf("add service account: %v", err)
 	}
-	edge := Edge{ID: "uses", From: pod.ID, To: serviceAccount.ID, Type: EdgeUses, Confidence: ConfidenceConfirmed}
+	edge := Edge{
+		ID: "uses", From: pod.ID, To: serviceAccount.ID, Type: EdgeUses, Confidence: ConfidenceConfirmed,
+		Evidence: []domain.Evidence{{Field: "spec.serviceAccountName", Value: "runner", Message: "Pod uses ServiceAccount runner"}},
+	}
 	if err := graph.AddEdge(edge); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
@@ -84,9 +87,14 @@ func TestGraphIndexesDirectionAndFindingAttachments(t *testing.T) {
 	}
 
 	gotPod.Attributes["observed"] = "mutated"
+	gotEdge.Evidence[0].Message = "mutated"
 	unchanged, _ := graph.Node(pod.ID)
 	if !reflect.DeepEqual(unchanged.Attributes, map[string]string{"observed": "true"}) {
 		t.Fatalf("node lookup exposed graph storage: %#v", unchanged.Attributes)
+	}
+	unchangedEdge, _ := graph.Edge(edge.ID)
+	if unchangedEdge.Evidence[0].Message != "Pod uses ServiceAccount runner" {
+		t.Fatalf("edge lookup exposed graph evidence storage: %#v", unchangedEdge.Evidence)
 	}
 }
 

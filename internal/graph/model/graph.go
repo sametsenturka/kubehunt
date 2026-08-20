@@ -54,6 +54,7 @@ type Edge struct {
 	Type       EdgeType
 	Confidence Confidence
 	Attributes map[string]string
+	Evidence   []domain.Evidence
 	Findings   []domain.Finding
 }
 
@@ -252,7 +253,7 @@ func sameNodeIdentity(left, right Node) bool {
 }
 
 func sameEdgeIdentity(left, right Edge) bool {
-	return left.ID == right.ID && left.From == right.From && left.To == right.To && left.Type == right.Type && left.Confidence == right.Confidence && reflect.DeepEqual(left.Attributes, right.Attributes)
+	return left.ID == right.ID && left.From == right.From && left.To == right.To && left.Type == right.Type && left.Confidence == right.Confidence && reflect.DeepEqual(left.Attributes, right.Attributes) && reflect.DeepEqual(left.Evidence, right.Evidence)
 }
 
 func appendFinding(findings []domain.Finding, finding domain.Finding) []domain.Finding {
@@ -290,6 +291,7 @@ func cloneNode(node Node) Node {
 
 func cloneEdge(edge Edge) Edge {
 	edge.Attributes = cloneMap(edge.Attributes)
+	edge.Evidence = append([]domain.Evidence(nil), edge.Evidence...)
 	edge.Findings = cloneFindings(edge.Findings)
 	return edge
 }
@@ -303,6 +305,9 @@ func cloneFindings(findings []domain.Finding) []domain.Finding {
 		result[index] = finding
 		result[index].Evidence = append([]domain.Evidence(nil), finding.Evidence...)
 		result[index].RelatedOWASP = append([]domain.OWASPCategory(nil), finding.RelatedOWASP...)
+		result[index].AffectedResources = append([]domain.ResourceReference(nil), finding.AffectedResources...)
+		result[index].AttackPath = cloneAttackPath(finding.AttackPath)
+		result[index].SupportingFindings = cloneSupportingFindings(finding.SupportingFindings)
 		if finding.RiskScore != nil {
 			riskScore := *finding.RiskScore
 			riskScore.Factors = make(map[string]int, len(finding.RiskScore.Factors))
@@ -311,6 +316,41 @@ func cloneFindings(findings []domain.Finding) []domain.Finding {
 			}
 			result[index].RiskScore = &riskScore
 		}
+	}
+	return result
+}
+
+func cloneAttackPath(path []domain.AttackPathStep) []domain.AttackPathStep {
+	if path == nil {
+		return nil
+	}
+	result := make([]domain.AttackPathStep, len(path))
+	for index, step := range path {
+		result[index] = step
+		result[index].From = cloneAttackPathNode(step.From)
+		result[index].To = cloneAttackPathNode(step.To)
+		result[index].Evidence = append([]domain.Evidence(nil), step.Evidence...)
+	}
+	return result
+}
+
+func cloneAttackPathNode(node domain.AttackPathNode) domain.AttackPathNode {
+	if node.Resource != nil {
+		resource := *node.Resource
+		node.Resource = &resource
+	}
+	node.Attributes = cloneMap(node.Attributes)
+	return node
+}
+
+func cloneSupportingFindings(findings []domain.SupportingFinding) []domain.SupportingFinding {
+	if findings == nil {
+		return nil
+	}
+	result := make([]domain.SupportingFinding, len(findings))
+	for index, finding := range findings {
+		result[index] = finding
+		result[index].Evidence = append([]domain.Evidence(nil), finding.Evidence...)
 	}
 	return result
 }
