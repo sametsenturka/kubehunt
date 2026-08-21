@@ -1,7 +1,7 @@
 <div align="center">
   <img width="240" height="182" alt="KubeHunt logo" src="https://github.com/user-attachments/assets/77c72662-c71d-455e-97f9-1e3f940b681d" />
   <h1>KubeHunt</h1>
-  <p>Deterministic, read-only Kubernetes security posture scanning from your terminal.</p>
+  <p>Deterministic, Kubernetes Security Posture Scanning from your terminal.</p>
   <p>Mapped to the <a href="https://owasp.org/www-project-kubernetes-top-ten/">OWASP Kubernetes Top 10:2025</a>.</p>
 </div>
 
