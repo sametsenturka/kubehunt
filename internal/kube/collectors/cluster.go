@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -71,6 +73,9 @@ func (collector *ClusterCollector) Collect(ctx context.Context, client kubernete
 		collector.roleBindingTask(client, namespaces, pageSize, &state),
 		collector.clusterRoleBindingTask(client, pageSize, &state),
 		collector.networkPolicyTask(client, namespaces, pageSize, &state),
+		collector.validatingAdmissionPolicyTask(client, pageSize, &state),
+		collector.validatingAdmissionPolicyBindingTask(client, pageSize, &state),
+		collector.validatingWebhookConfigurationTask(client, pageSize, &state),
 	}
 
 	concurrency := collector.Concurrency
@@ -81,6 +86,9 @@ func (collector *ClusterCollector) Collect(ctx context.Context, client kubernete
 	var collectionErrors []error
 	for index, result := range results {
 		if result.err != nil {
+			if tasks[index].optionalAPI && apierrors.IsNotFound(result.err) {
+				continue
+			}
 			collectionErrors = append(collectionErrors, fmt.Errorf("collect %s: %w", tasks[index].kind, result.err))
 			continue
 		}
@@ -100,8 +108,9 @@ func (collector *ClusterCollector) Collect(ctx context.Context, client kubernete
 }
 
 type collectionTask struct {
-	kind domain.ResourceKind
-	run  func(context.Context) (string, error)
+	kind        domain.ResourceKind
+	optionalAPI bool
+	run         func(context.Context) (string, error)
 }
 
 type collectionTaskResult struct {
@@ -439,6 +448,57 @@ func (collector *ClusterCollector) networkPolicyTask(client kubernetes.Interface
 	}}
 }
 
+func (collector *ClusterCollector) validatingAdmissionPolicyTask(client kubernetes.Interface, pageSize int64, state *domain.ClusterState) collectionTask {
+	return collectionTask{kind: domain.KindValidatingAdmissionPolicies, optionalAPI: true, run: func(ctx context.Context) (string, error) {
+		items, version, err := listAll(ctx, pageSize, func(ctx context.Context, options metav1.ListOptions) ([]admissionv1.ValidatingAdmissionPolicy, string, string, error) {
+			page, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().List(ctx, options)
+			if err != nil {
+				return nil, "", "", err
+			}
+			return page.Items, page.ResourceVersion, page.Continue, nil
+		})
+		if err != nil {
+			return "", err
+		}
+		state.ValidatingAdmissionPolicies = mapItems(items, normalizeValidatingAdmissionPolicy)
+		return version, nil
+	}}
+}
+
+func (collector *ClusterCollector) validatingAdmissionPolicyBindingTask(client kubernetes.Interface, pageSize int64, state *domain.ClusterState) collectionTask {
+	return collectionTask{kind: domain.KindValidatingAdmissionPolicyBindings, optionalAPI: true, run: func(ctx context.Context) (string, error) {
+		items, version, err := listAll(ctx, pageSize, func(ctx context.Context, options metav1.ListOptions) ([]admissionv1.ValidatingAdmissionPolicyBinding, string, string, error) {
+			page, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().List(ctx, options)
+			if err != nil {
+				return nil, "", "", err
+			}
+			return page.Items, page.ResourceVersion, page.Continue, nil
+		})
+		if err != nil {
+			return "", err
+		}
+		state.ValidatingAdmissionPolicyBindings = mapItems(items, normalizeValidatingAdmissionPolicyBinding)
+		return version, nil
+	}}
+}
+
+func (collector *ClusterCollector) validatingWebhookConfigurationTask(client kubernetes.Interface, pageSize int64, state *domain.ClusterState) collectionTask {
+	return collectionTask{kind: domain.KindValidatingWebhookConfigurations, run: func(ctx context.Context) (string, error) {
+		items, version, err := listAll(ctx, pageSize, func(ctx context.Context, options metav1.ListOptions) ([]admissionv1.ValidatingWebhookConfiguration, string, string, error) {
+			page, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, options)
+			if err != nil {
+				return nil, "", "", err
+			}
+			return page.Items, page.ResourceVersion, page.Continue, nil
+		})
+		if err != nil {
+			return "", err
+		}
+		state.ValidatingWebhookConfigurations = mapItems(items, normalizeValidatingWebhookConfiguration)
+		return version, nil
+	}}
+}
+
 func (collector *ClusterCollector) pageSize() int64 {
 	if collector.PageSize <= 0 {
 		return defaultPageSize
@@ -486,6 +546,9 @@ func sortState(state *domain.ClusterState) {
 	sortByMetadata(state.RoleBindings, func(item domain.RoleBinding) domain.Metadata { return item.Metadata })
 	sortByMetadata(state.ClusterRoleBindings, func(item domain.RoleBinding) domain.Metadata { return item.Metadata })
 	sortByMetadata(state.NetworkPolicies, func(item domain.NetworkPolicy) domain.Metadata { return item.Metadata })
+	sortByMetadata(state.ValidatingAdmissionPolicies, func(item domain.ValidatingAdmissionPolicy) domain.Metadata { return item.Metadata })
+	sortByMetadata(state.ValidatingAdmissionPolicyBindings, func(item domain.ValidatingAdmissionPolicyBinding) domain.Metadata { return item.Metadata })
+	sortByMetadata(state.ValidatingWebhookConfigurations, func(item domain.ValidatingWebhookConfiguration) domain.Metadata { return item.Metadata })
 }
 
 func sortByMetadata[T any](items []T, metadata func(T) domain.Metadata) {

@@ -14,6 +14,8 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/kube/collectors"
 	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k01"
 	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k02"
+	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k03"
+	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k04"
 	"github.com/sametsenturka/kubehunt/internal/rules/engine"
 )
 
@@ -52,6 +54,8 @@ type Scanner struct {
 
 func NewScanner() *Scanner {
 	registeredRules := append(k01.Rules(), k02.Rules()...)
+	registeredRules = append(registeredRules, k03.Rules()...)
+	registeredRules = append(registeredRules, k04.Rules()...)
 	ruleEngine, err := engine.New(registeredRules...)
 	return &Scanner{
 		Clients:             kubeclient.DefaultProvider{},

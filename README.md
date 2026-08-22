@@ -6,7 +6,7 @@
 </div>
 
 > [!IMPORTANT]
-> KubeHunt is under active development. The current version provides cluster inventory, K01 workload checks, K02 native Kubernetes RBAC checks, and initial evidence-backed attack-path correlation. It does not yet provide JSON/SARIF output, CI severity gates, standalone K03-K10 rules, or prebuilt release binaries.
+> KubeHunt is under active development. The current version provides cluster inventory, K01-K04 deterministic checks, and initial evidence-backed attack-path correlation. It does not yet provide JSON/SARIF output, CI severity gates, K05-K10 rules, or prebuilt release binaries.
 
 ## What KubeHunt does
 
@@ -16,10 +16,12 @@ The scanner is deliberately deterministic: findings come from Kubernetes objects
 
 Current capabilities include:
 
-- Cluster inventory across 13 Kubernetes resource types.
+- Cluster inventory across 16 Kubernetes resource types.
 - OWASP K01:2025 workload configuration checks.
 - OWASP K02:2025 effective RBAC analysis across subjects, bindings, roles, and permissions.
-- Analysis of regular containers and init containers.
+- OWASP K03:2025 Secret environment-reference checks without reading Secret values.
+- OWASP K04:2025 Pod Security Admission, ValidatingAdmissionPolicy, and validating webhook checks.
+- Analysis of regular and init containers, plus ephemeral containers for K03 Secret environment references.
 - Deduplication of supported controller templates and their child Pods.
 - An in-memory attack graph with stable node identifiers and evidence-bearing semantic edges.
 - High-confidence correlation for Pod creation and RBAC modification opportunities.
@@ -138,6 +140,9 @@ ClusterRoles         68
 RoleBindings         12
 ClusterRoleBindings  55
 NetworkPolicies      0
+ValidatingAdmissionPolicies        0
+ValidatingAdmissionPolicyBindings  0
+ValidatingWebhookConfigurations    2
 
 Findings: 1
 
@@ -197,10 +202,10 @@ KubeHunt currently collects and normalizes:
 
 | Scope | Resources |
 | --- | --- |
-| Cluster-scoped | Namespaces, ClusterRoles, ClusterRoleBindings |
+| Cluster-scoped | Namespaces, ClusterRoles, ClusterRoleBindings, ValidatingAdmissionPolicies, ValidatingAdmissionPolicyBindings, ValidatingWebhookConfigurations |
 | Namespaced | Pods, Deployments, StatefulSets, DaemonSets, Services, Ingresses, ServiceAccounts, Roles, RoleBindings, NetworkPolicies |
 
-Secret objects and Secret values are not collected. The normalized model can contain Secret *references* exposed by workload volumes or ServiceAccount metadata, but not Secret payloads.
+Secret objects and Secret values are not collected. The normalized model can contain Secret *references* exposed by container environment configuration, workload volumes, or ServiceAccount metadata, but not Secret payloads or inline environment values.
 
 ## Security checks
 
@@ -248,6 +253,34 @@ It preserves namespace scope, resolves ClusterRole aggregation, accounts for sub
 | `KSCAN-K02-011` | Role, ClusterRole, RoleBinding, or ClusterRoleBinding modification |
 
 K02 covers native RBAC objects visible to the scanner. It cannot determine external identity-provider group membership, webhook/ABAC authorization, cloud IAM mappings, business necessity, or time-bound access.
+
+`KSCAN-K02-003` is primarily mapped to K02 because authorization is the defect and also related to K03 because the grant can expose Secret contents.
+
+### OWASP K03:2025 — Secrets Management Failures
+
+K03 checks use only references in Pod and workload configuration. KubeHunt never requests the referenced Secret object and never stores or reports its value.
+
+| Rule | Detection | Default severity |
+| --- | --- | --- |
+| `KSCAN-K03-001` | A regular, init, or ephemeral container injects one Secret key through an environment variable | Medium |
+| `KSCAN-K03-002` | A regular, init, or ephemeral container injects every key from a Secret through `envFrom.secretRef` | High |
+
+These findings identify credential exposure through process environment state, where debug output or application logging can disclose values. They do not claim that a value has been logged, read, or compromised. Mounted Secret files are not reported by these rules because file-based delivery is the preferred Kubernetes alternative when configured carefully.
+
+K03 cannot currently assess Secret contents, image layers, source repositories, application logs, etcd encryption, rotation history, external secret stores, or long-lived Secret metadata.
+
+### OWASP K04:2025 — Lack Of Cluster Level Policy Enforcement
+
+K04 reports explicit non-enforcing or fail-open admission configuration:
+
+| Rule | Detection | Default severity |
+| --- | --- | --- |
+| `KSCAN-K04-001` | Namespace explicitly sets `pod-security.kubernetes.io/enforce=privileged` | Medium |
+| `KSCAN-K04-002` | ValidatingAdmissionPolicyBinding uses Audit/Warn without `Deny` | Medium |
+| `KSCAN-K04-003` | ValidatingAdmissionPolicy explicitly sets `failurePolicy=Ignore` | Medium |
+| `KSCAN-K04-004` | Validating admission webhook explicitly sets `failurePolicy=Ignore` | Medium |
+
+An absent Pod Security Admission label is not automatically a finding because the API server may define cluster-wide defaults that are not visible through ordinary resource collection. Likewise, the absence of a VAP or webhook does not prove that no policy engine exists. K04 results therefore remain partial and do not claim complete policy coverage.
 
 ## Attack-path correlation
 
@@ -298,6 +331,12 @@ rules:
       - rolebindings
       - clusterrolebindings
     verbs: ["get", "list"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources:
+      - validatingadmissionpolicies
+      - validatingadmissionpolicybindings
+      - validatingwebhookconfigurations
+    verbs: ["get", "list"]
 ```
 
 Example binding template for an existing user:
@@ -325,6 +364,8 @@ Check access before scanning:
 kubectl auth can-i list pods --all-namespaces
 kubectl auth can-i list clusterroles
 kubectl auth can-i list clusterrolebindings
+kubectl auth can-i list validatingadmissionpolicies.admissionregistration.k8s.io
+kubectl auth can-i list validatingwebhookconfigurations.admissionregistration.k8s.io
 ```
 
 The current scanner returns an incomplete-inventory error if a required collection is forbidden or unavailable; it does not silently interpret a denied list as an empty, secure result.
@@ -349,7 +390,7 @@ CLI
   -> kubeconfig + guarded client-go client
   -> Kubernetes collectors
   -> normalized ClusterState
-  -> deterministic K01/K02 rule engine
+  -> deterministic K01-K04 rule engine
   -> in-memory relationship graph
   -> deterministic attack-path correlator
   -> terminal reporter
@@ -372,8 +413,8 @@ KubeHunt is mapped to OWASP Kubernetes Top 10:2025; it is not “OWASP compliant
 | --- | --- |
 | K01 Insecure Workload Configurations | Implemented for Pods, Deployments, StatefulSets, and DaemonSets; regular and init containers only. |
 | K02 Overly Permissive Authorization Configurations | Implemented for visible native Kubernetes RBAC; external authorizers and identity membership remain out of scope. |
-| K03 Secrets Management Failures | Not assessed by standalone rules. Used only as a related mapping in the dormant Secret-access correlation. |
-| K04 Lack of Cluster Level Policy Enforcement | Not assessed. |
+| K03 Secrets Management Failures | Partially implemented for Secret-to-environment references and related native RBAC exposure; Secret values, storage, rotation, repositories, images, and logs are not assessed. |
+| K04 Lack of Cluster Level Policy Enforcement | Partially implemented for explicit PSA privileged enforcement, non-denying VAP bindings, and fail-open VAP/webhook settings; cluster defaults and policy-engine CRDs are not assessed. |
 | K05 Missing Network Segmentation Controls | Not assessed. NetworkPolicies are collected and represented in the graph only. |
 | K06 Overly Exposed Kubernetes Components | Not assessed. Services and Ingresses are collected, but Internet reachability is not inferred. |
 | K07 Misconfigured and Vulnerable Cluster Components | Not assessed. |
@@ -389,7 +430,9 @@ The CLI does not yet emit a formal category coverage report. Until that capabili
 - `--fail-on` and CI-specific exit policy are not implemented. A successful scan exits successfully even when findings exist; collection or analysis errors return a non-zero exit code.
 - Contextual risk scoring is not implemented.
 - Secret metadata collection is not implemented, and Secret values are intentionally excluded.
-- Jobs, CronJobs, ReplicaSets as first-class desired-state targets, and standalone ephemeral-container rules are not implemented.
+- K03 does not scan literal environment values because retaining or reporting possible credentials would violate the default data-minimization boundary.
+- K04 cannot prove complete cluster-wide policy coverage from Namespace labels and native admission objects alone.
+- Jobs, CronJobs, and ReplicaSets are not implemented as first-class desired-state targets; K01-specific ephemeral-container checks are also not implemented.
 - Admission policy, runtime behavior, cloud networking, CNI enforcement, control-plane configuration, node configuration, audit pipelines, and verified Internet reachability are not visible.
 - Collection failures currently stop the scan with an incomplete-inventory error rather than producing a machine-readable partial-coverage report.
 - A tested Kubernetes version compatibility matrix has not yet been published.
@@ -471,7 +514,7 @@ Near-term work includes:
 - JSON and SARIF 2.1.0 reporters.
 - CI severity thresholds with `--fail-on`.
 - Transparent contextual risk scoring.
-- K03-K06 deterministic rules and activation of the exposure-to-Secret attack path.
+- K05-K06 deterministic rules and activation of the exposure-to-Secret attack path.
 - Safe Secret metadata collection without Secret payloads.
 - Versioned, checksummed cross-platform GitHub Releases.
 - A Kubernetes compatibility matrix and integration-test environments.

@@ -10,7 +10,10 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/rules"
 )
 
-var category = domain.OWASPCategory{ID: "K02", Version: "2025", Title: "Overly Permissive Authorization Configurations"}
+var (
+	category    = domain.OWASPCategory{ID: "K02", Version: "2025", Title: "Overly Permissive Authorization Configurations"}
+	categoryK03 = domain.OWASPCategory{ID: "K03", Version: "2025", Title: "Secrets Management Failures"}
+)
 
 type assignmentRule struct {
 	metadata rules.Metadata
@@ -30,7 +33,7 @@ func Rules() []rules.Rule {
 	return []rules.Rule{
 		newRule("KSCAN-K02-001", "Cluster-admin binding", "A subject receives effective cluster-admin permissions through an RBAC binding.", domain.SeverityCritical, "Remove the cluster-admin binding and replace it with a narrowly scoped Role or ClusterRole containing only required permissions.", evaluateClusterAdmin),
 		newRule("KSCAN-K02-002", "Broad wildcard permission", "An effective RBAC permission uses wildcard verbs, resources, or API groups.", domain.SeverityMedium, "Replace wildcard entries with explicit API groups, resources, and verbs required by the subject.", evaluateWildcards),
-		newPermissionRule("KSCAN-K02-003", "Secret read permission", "A subject can read Secret objects through get, list, watch, or wildcard verbs.", domain.SeverityMedium, "Remove Secret read access or restrict it to the smallest namespace and named Secrets required.", 45, false, matchesSecretRead),
+		withRelatedK03(newPermissionRule("KSCAN-K02-003", "Secret read permission", "A subject can read Secret objects through get, list, watch, or wildcard verbs.", domain.SeverityMedium, "Remove Secret read access or restrict it to the smallest namespace and named Secrets required.", 45, false, matchesSecretRead)),
 		newPermissionRule("KSCAN-K02-004", "Pod exec permission", "A subject can execute commands in Pods through the pods/exec subresource.", domain.SeverityHigh, "Remove pods/exec access or restrict it to a dedicated operational identity and namespace.", 55, true, matchesPodExec),
 		newPermissionRule("KSCAN-K02-005", "Pod attach permission", "A subject can attach to running container processes through the pods/attach subresource.", domain.SeverityHigh, "Remove pods/attach access or restrict it to a dedicated operational identity and namespace.", 55, true, matchesPodAttach),
 		newPermissionRule("KSCAN-K02-006", "Pod creation permission", "A subject can create Pods, which can enable workload-based privilege escalation depending on other controls.", domain.SeverityHigh, "Remove Pod creation access or constrain it to a namespace protected by reviewed admission policies and a narrow workload role.", 55, true, matchesPodCreate),
@@ -42,7 +45,7 @@ func Rules() []rules.Rule {
 	}
 }
 
-func newRule(id, title, description string, severity domain.Severity, remediation string, evaluate func(context.Context, rbac.Model) []domain.Finding) rules.Rule {
+func newRule(id, title, description string, severity domain.Severity, remediation string, evaluate func(context.Context, rbac.Model) []domain.Finding) assignmentRule {
 	return assignmentRule{
 		metadata: rules.Metadata{
 			ID:                    id,
@@ -71,7 +74,7 @@ func newRule(id, title, description string, severity domain.Severity, remediatio
 
 type permissionMatcher func(rbac.Assignment, rbac.Permission) bool
 
-func newPermissionRule(id, title, description string, defaultSeverity domain.Severity, remediation string, baseRisk int, escalationPotential bool, match permissionMatcher) rules.Rule {
+func newPermissionRule(id, title, description string, defaultSeverity domain.Severity, remediation string, baseRisk int, escalationPotential bool, match permissionMatcher) assignmentRule {
 	return newRule(id, title, description, defaultSeverity, remediation, func(ctx context.Context, model rbac.Model) []domain.Finding {
 		var findings []domain.Finding
 		for _, assignment := range model.Assignments {
@@ -90,6 +93,16 @@ func newPermissionRule(id, title, description string, defaultSeverity domain.Sev
 		}
 		return findings
 	})
+}
+
+func withRelatedK03(rule assignmentRule) assignmentRule {
+	rule.metadata.OWASPMappings = append(rule.metadata.OWASPMappings, rules.OWASPMapping{
+		TaxonomyID: rules.OWASPTaxonomyID,
+		Category:   categoryK03,
+		Type:       rules.MappingRelated,
+		Rationale:  "The authorization grant can expose Kubernetes Secret contents to the bound subject.",
+	})
+	return rule
 }
 
 func evaluateClusterAdmin(ctx context.Context, model rbac.Model) []domain.Finding {

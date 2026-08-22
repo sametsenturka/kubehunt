@@ -30,12 +30,16 @@ func (severity Severity) Rank() int {
 type CapabilityID string
 
 const (
-	CapabilityPodsList                CapabilityID = "kubernetes.core.pods.list"
-	CapabilityWorkloadTemplatesList   CapabilityID = "kubernetes.apps.workload_templates.list"
-	CapabilityRolesList               CapabilityID = "kubernetes.rbac.roles.list"
-	CapabilityClusterRolesList        CapabilityID = "kubernetes.rbac.clusterroles.list"
-	CapabilityRoleBindingsList        CapabilityID = "kubernetes.rbac.rolebindings.list"
-	CapabilityClusterRoleBindingsList CapabilityID = "kubernetes.rbac.clusterrolebindings.list"
+	CapabilityPodsList                            CapabilityID = "kubernetes.core.pods.list"
+	CapabilityWorkloadTemplatesList               CapabilityID = "kubernetes.apps.workload_templates.list"
+	CapabilityRolesList                           CapabilityID = "kubernetes.rbac.roles.list"
+	CapabilityClusterRolesList                    CapabilityID = "kubernetes.rbac.clusterroles.list"
+	CapabilityRoleBindingsList                    CapabilityID = "kubernetes.rbac.rolebindings.list"
+	CapabilityClusterRoleBindingsList             CapabilityID = "kubernetes.rbac.clusterrolebindings.list"
+	CapabilityNamespacesList                      CapabilityID = "kubernetes.core.namespaces.list"
+	CapabilityValidatingAdmissionPoliciesList     CapabilityID = "kubernetes.admission.validatingadmissionpolicies.list"
+	CapabilityValidatingAdmissionBindingsList     CapabilityID = "kubernetes.admission.validatingadmissionpolicybindings.list"
+	CapabilityValidatingWebhookConfigurationsList CapabilityID = "kubernetes.admission.validatingwebhookconfigurations.list"
 )
 
 type ResourceReference struct {

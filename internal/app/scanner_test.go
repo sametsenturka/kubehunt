@@ -14,15 +14,19 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/kube/collectors"
 )
 
-func TestNewScannerRegistersK01AndK02Rules(t *testing.T) {
+func TestNewScannerRegistersK01ThroughK04Rules(t *testing.T) {
 	t.Parallel()
 
 	trueValue := true
 	state := domain.ClusterState{
+		Namespaces: []domain.Namespace{{Metadata: domain.Metadata{
+			Name: "team-a", Labels: map[string]string{"pod-security.kubernetes.io/enforce": "privileged"},
+		}}},
 		Pods: []domain.Pod{{
 			Metadata: domain.Metadata{Name: "privileged", Namespace: "team-a"},
 			Spec: domain.PodSpec{Containers: []domain.Container{{
 				Name: "app", SecurityContext: domain.ContainerSecurityContext{Privileged: &trueValue},
+				SecretEnvironmentVariables: []domain.SecretEnvironmentVariable{{Name: "TOKEN", SecretName: "credentials", SecretKey: "token"}},
 			}}},
 		}},
 		ClusterRoles: []domain.Role{{
@@ -43,7 +47,7 @@ func TestNewScannerRegistersK01AndK02Rules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
 	}
-	wanted := map[string]bool{"KSCAN-K01-001": false, "KSCAN-K02-003": false}
+	wanted := map[string]bool{"KSCAN-K01-001": false, "KSCAN-K02-003": false, "KSCAN-K03-001": false, "KSCAN-K04-001": false}
 	for _, finding := range findings {
 		if _, exists := wanted[finding.RuleID]; exists {
 			wanted[finding.RuleID] = true

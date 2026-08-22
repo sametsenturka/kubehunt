@@ -28,6 +28,9 @@ func Build(state domain.ClusterState, findings []domain.Finding) (*model.Graph, 
 	if err := addServiceAccountEdges(graph, clusterKey, state); err != nil {
 		return nil, fmt.Errorf("build graph service accounts: %w", err)
 	}
+	if err := addAdmissionPolicyEdges(graph, clusterKey, state); err != nil {
+		return nil, fmt.Errorf("build graph admission policies: %w", err)
+	}
 	if err := addRBACEdges(graph, clusterKey, rbac.Build(state)); err != nil {
 		return nil, fmt.Errorf("build graph RBAC: %w", err)
 	}
@@ -109,6 +112,21 @@ func addInventoryNodes(graph *model.Graph, clusterKey string, state domain.Clust
 	}
 	for _, item := range state.NetworkPolicies {
 		if err := addResourceNode(graph, clusterKey, "networking.k8s.io/v1", "NetworkPolicy", item.Metadata, nil); err != nil {
+			return err
+		}
+	}
+	for _, item := range state.ValidatingAdmissionPolicies {
+		if err := addResourceNode(graph, clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", item.Metadata, map[string]string{"failure_policy": item.FailurePolicy}); err != nil {
+			return err
+		}
+	}
+	for _, item := range state.ValidatingAdmissionPolicyBindings {
+		if err := addResourceNode(graph, clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", item.Metadata, map[string]string{"policy_name": item.PolicyName}); err != nil {
+			return err
+		}
+	}
+	for _, item := range state.ValidatingWebhookConfigurations {
+		if err := addResourceNode(graph, clusterKey, "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", item.Metadata, nil); err != nil {
 			return err
 		}
 	}
@@ -196,6 +214,32 @@ func addUsesServiceAccount(graph *model.Graph, clusterKey string, source domain.
 	}
 	evidence := domain.Evidence{Field: field, Value: value, Message: fmt.Sprintf("%s/%s uses ServiceAccount %q", source.Kind, source.Name, name)}
 	return addEdge(graph, model.ResourceNodeID(clusterKey, source), model.ResourceNodeID(clusterKey, target), model.EdgeUses, model.ConfidenceConfirmed, sourceType, map[string]string{"source": sourceType}, evidence)
+}
+
+func addAdmissionPolicyEdges(graph *model.Graph, clusterKey string, state domain.ClusterState) error {
+	for _, binding := range state.ValidatingAdmissionPolicyBindings {
+		if binding.PolicyName == "" {
+			continue
+		}
+		from := resourceReference("admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", binding.Metadata)
+		to := domain.ResourceReference{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingAdmissionPolicy", Name: binding.PolicyName}
+		confidence := model.ConfidenceConfirmed
+		if _, found := graph.NodeForResource(to); !found {
+			confidence = model.ConfidenceUnknown
+			if err := ensureResourceNode(graph, clusterKey, to); err != nil {
+				return err
+			}
+		}
+		evidence := domain.Evidence{
+			Field:   "spec.policyName",
+			Value:   binding.PolicyName,
+			Message: fmt.Sprintf("ValidatingAdmissionPolicyBinding %q references ValidatingAdmissionPolicy %q", binding.Metadata.Name, binding.PolicyName),
+		}
+		if err := addEdge(graph, model.ResourceNodeID(clusterKey, from), model.ResourceNodeID(clusterKey, to), model.EdgeReferences, confidence, binding.PolicyName, map[string]string{"policy_resolved": fmt.Sprint(confidence == model.ConfidenceConfirmed)}, evidence); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func addRBACEdges(graph *model.Graph, clusterKey string, effective rbac.Model) error {
@@ -562,4 +606,5 @@ var clusterScopedResources = map[string]struct{}{
 	"apiextensions.k8s.io/customresourcedefinitions": {},
 	"storage.k8s.io/storageclasses":                  {}, "storage.k8s.io/csidrivers": {}, "storage.k8s.io/csinodes": {}, "storage.k8s.io/volumeattachments": {},
 	"admissionregistration.k8s.io/mutatingwebhookconfigurations": {}, "admissionregistration.k8s.io/validatingwebhookconfigurations": {},
+	"admissionregistration.k8s.io/validatingadmissionpolicies": {}, "admissionregistration.k8s.io/validatingadmissionpolicybindings": {},
 }

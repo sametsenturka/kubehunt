@@ -67,6 +67,10 @@ func TestBuildCreatesKubernetesSecurityRelationships(t *testing.T) {
 	clusterRole := resourceID(clusterKey, "rbac.authorization.k8s.io/v1", "ClusterRole", "", "pod-viewer")
 	assertEdge(t, graph, group, clusterBinding, model.EdgeBoundVia, model.ConfidenceConfirmed)
 	assertEdge(t, graph, clusterBinding, clusterRole, model.EdgeReferences, model.ConfidenceConfirmed)
+
+	policyBinding := resourceID(clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "", "required-labels-binding")
+	admissionPolicy := resourceID(clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "", "required-labels")
+	assertEdge(t, graph, policyBinding, admissionPolicy, model.EdgeReferences, model.ConfidenceConfirmed)
 }
 
 func TestBuildProducesDeterministicNodeAndEdgeOrder(t *testing.T) {
@@ -108,6 +112,23 @@ func TestBuildKeepsIdentifiersStableWhenKubernetesUIDsChange(t *testing.T) {
 	if !reflect.DeepEqual(edgeIDs(first), edgeIDs(second)) {
 		t.Fatal("edge identifiers changed with Kubernetes UIDs")
 	}
+}
+
+func TestBuildMarksDanglingAdmissionPolicyReferenceUnknown(t *testing.T) {
+	state := domain.ClusterState{
+		Cluster: domain.ClusterMetadata{Name: "test"},
+		ValidatingAdmissionPolicyBindings: []domain.ValidatingAdmissionPolicyBinding{{
+			Metadata: domain.Metadata{Name: "dangling"}, PolicyName: "missing-policy", ValidationActions: []string{"Audit"},
+		}},
+	}
+	graph, err := graphbuild.Build(state, nil)
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+	clusterKey := model.ClusterKey(state.Cluster)
+	binding := resourceID(clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicyBinding", "", "dangling")
+	policy := resourceID(clusterKey, "admissionregistration.k8s.io/v1", "ValidatingAdmissionPolicy", "", "missing-policy")
+	assertEdge(t, graph, binding, policy, model.EdgeReferences, model.ConfidenceUnknown)
 }
 
 func graphFixture() domain.ClusterState {
@@ -154,6 +175,12 @@ func graphFixture() domain.ClusterState {
 			Metadata: domain.Metadata{Name: "view-pods"},
 			RoleRef:  domain.RoleReference{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "pod-viewer"},
 			Subjects: []domain.Subject{{APIGroup: "rbac.authorization.k8s.io", Kind: "Group", Name: "developers"}},
+		}},
+		ValidatingAdmissionPolicies: []domain.ValidatingAdmissionPolicy{{
+			Metadata: domain.Metadata{Name: "required-labels"}, FailurePolicy: "Fail",
+		}},
+		ValidatingAdmissionPolicyBindings: []domain.ValidatingAdmissionPolicyBinding{{
+			Metadata: domain.Metadata{Name: "required-labels-binding"}, PolicyName: "required-labels", ValidationActions: []string{"Deny"},
 		}},
 	}
 }

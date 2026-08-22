@@ -3,6 +3,7 @@ package collectors
 import (
 	"fmt"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -131,22 +132,60 @@ func normalizePodSpec(spec corev1.PodSpec) domain.PodSpec {
 
 func normalizeContainer(container corev1.Container) domain.Container {
 	return domain.Container{
-		Name:            container.Name,
-		Image:           container.Image,
-		SecurityContext: normalizeContainerSecurityContext(container.SecurityContext),
-		VolumeMounts:    normalizeVolumeMounts(container.VolumeMounts),
-		Limits:          normalizeResourceList(container.Resources.Limits),
-		Requests:        normalizeResourceList(container.Resources.Requests),
+		Name:                       container.Name,
+		Image:                      container.Image,
+		SecurityContext:            normalizeContainerSecurityContext(container.SecurityContext),
+		VolumeMounts:               normalizeVolumeMounts(container.VolumeMounts),
+		Limits:                     normalizeResourceList(container.Resources.Limits),
+		Requests:                   normalizeResourceList(container.Resources.Requests),
+		SecretEnvironmentVariables: normalizeSecretEnvironmentVariables(container.Env),
+		SecretEnvironmentSources:   normalizeSecretEnvironmentSources(container.EnvFrom),
 	}
 }
 
 func normalizeEphemeralContainer(container corev1.EphemeralContainer) domain.Container {
 	return domain.Container{
-		Name:            container.Name,
-		Image:           container.Image,
-		SecurityContext: normalizeContainerSecurityContext(container.SecurityContext),
-		VolumeMounts:    normalizeVolumeMounts(container.VolumeMounts),
+		Name:                       container.Name,
+		Image:                      container.Image,
+		SecurityContext:            normalizeContainerSecurityContext(container.SecurityContext),
+		VolumeMounts:               normalizeVolumeMounts(container.VolumeMounts),
+		SecretEnvironmentVariables: normalizeSecretEnvironmentVariables(container.Env),
+		SecretEnvironmentSources:   normalizeSecretEnvironmentSources(container.EnvFrom),
 	}
+}
+
+func normalizeSecretEnvironmentVariables(environment []corev1.EnvVar) []domain.SecretEnvironmentVariable {
+	var result []domain.SecretEnvironmentVariable
+	for index, variable := range environment {
+		if variable.ValueFrom == nil || variable.ValueFrom.SecretKeyRef == nil {
+			continue
+		}
+		reference := variable.ValueFrom.SecretKeyRef
+		result = append(result, domain.SecretEnvironmentVariable{
+			Index:      index,
+			Name:       variable.Name,
+			SecretName: reference.Name,
+			SecretKey:  reference.Key,
+			Optional:   copyBool(reference.Optional),
+		})
+	}
+	return result
+}
+
+func normalizeSecretEnvironmentSources(sources []corev1.EnvFromSource) []domain.SecretEnvironmentSource {
+	var result []domain.SecretEnvironmentSource
+	for index, source := range sources {
+		if source.SecretRef == nil {
+			continue
+		}
+		result = append(result, domain.SecretEnvironmentSource{
+			Index:      index,
+			Prefix:     source.Prefix,
+			SecretName: source.SecretRef.Name,
+			Optional:   copyBool(source.SecretRef.Optional),
+		})
+	}
+	return result
 }
 
 func normalizeVolumeMounts(mounts []corev1.VolumeMount) []domain.VolumeMount {
@@ -429,6 +468,38 @@ func normalizeNetworkPolicyPorts(ports []networkingv1.NetworkPolicyPort) []domai
 		result = append(result, normalized)
 	}
 	return result
+}
+
+func normalizeValidatingAdmissionPolicy(policy admissionv1.ValidatingAdmissionPolicy) domain.ValidatingAdmissionPolicy {
+	result := domain.ValidatingAdmissionPolicy{Metadata: normalizeMetadata(&policy)}
+	if policy.Spec.FailurePolicy != nil {
+		result.FailurePolicy = string(*policy.Spec.FailurePolicy)
+	}
+	return result
+}
+
+func normalizeValidatingAdmissionPolicyBinding(binding admissionv1.ValidatingAdmissionPolicyBinding) domain.ValidatingAdmissionPolicyBinding {
+	actions := make([]string, 0, len(binding.Spec.ValidationActions))
+	for _, action := range binding.Spec.ValidationActions {
+		actions = append(actions, string(action))
+	}
+	return domain.ValidatingAdmissionPolicyBinding{
+		Metadata:          normalizeMetadata(&binding),
+		PolicyName:        binding.Spec.PolicyName,
+		ValidationActions: actions,
+	}
+}
+
+func normalizeValidatingWebhookConfiguration(configuration admissionv1.ValidatingWebhookConfiguration) domain.ValidatingWebhookConfiguration {
+	webhooks := make([]domain.ValidatingWebhook, 0, len(configuration.Webhooks))
+	for _, webhook := range configuration.Webhooks {
+		normalized := domain.ValidatingWebhook{Name: webhook.Name}
+		if webhook.FailurePolicy != nil {
+			normalized.FailurePolicy = string(*webhook.FailurePolicy)
+		}
+		webhooks = append(webhooks, normalized)
+	}
+	return domain.ValidatingWebhookConfiguration{Metadata: normalizeMetadata(&configuration), Webhooks: webhooks}
 }
 
 func normalizeLabelSelector(selector *metav1.LabelSelector) domain.LabelSelector {

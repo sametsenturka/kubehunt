@@ -5,21 +5,24 @@ import "time"
 // ClusterState is the normalized, in-memory representation of one cluster
 // inventory. It deliberately contains no client-go API objects.
 type ClusterState struct {
-	Cluster             ClusterMetadata
-	Namespaces          []Namespace
-	Pods                []Pod
-	Deployments         []Workload
-	StatefulSets        []Workload
-	DaemonSets          []Workload
-	Services            []Service
-	Ingresses           []Ingress
-	ServiceAccounts     []ServiceAccount
-	Roles               []Role
-	ClusterRoles        []Role
-	RoleBindings        []RoleBinding
-	ClusterRoleBindings []RoleBinding
-	NetworkPolicies     []NetworkPolicy
-	Collections         map[ResourceKind]CollectionMetadata
+	Cluster                           ClusterMetadata
+	Namespaces                        []Namespace
+	Pods                              []Pod
+	Deployments                       []Workload
+	StatefulSets                      []Workload
+	DaemonSets                        []Workload
+	Services                          []Service
+	Ingresses                         []Ingress
+	ServiceAccounts                   []ServiceAccount
+	Roles                             []Role
+	ClusterRoles                      []Role
+	RoleBindings                      []RoleBinding
+	ClusterRoleBindings               []RoleBinding
+	NetworkPolicies                   []NetworkPolicy
+	ValidatingAdmissionPolicies       []ValidatingAdmissionPolicy
+	ValidatingAdmissionPolicyBindings []ValidatingAdmissionPolicyBinding
+	ValidatingWebhookConfigurations   []ValidatingWebhookConfiguration
+	Collections                       map[ResourceKind]CollectionMetadata
 }
 
 type ClusterMetadata struct {
@@ -34,19 +37,22 @@ type ClusterMetadata struct {
 type ResourceKind string
 
 const (
-	KindNamespaces          ResourceKind = "Namespaces"
-	KindPods                ResourceKind = "Pods"
-	KindDeployments         ResourceKind = "Deployments"
-	KindStatefulSets        ResourceKind = "StatefulSets"
-	KindDaemonSets          ResourceKind = "DaemonSets"
-	KindServices            ResourceKind = "Services"
-	KindIngresses           ResourceKind = "Ingresses"
-	KindServiceAccounts     ResourceKind = "ServiceAccounts"
-	KindRoles               ResourceKind = "Roles"
-	KindClusterRoles        ResourceKind = "ClusterRoles"
-	KindRoleBindings        ResourceKind = "RoleBindings"
-	KindClusterRoleBindings ResourceKind = "ClusterRoleBindings"
-	KindNetworkPolicies     ResourceKind = "NetworkPolicies"
+	KindNamespaces                        ResourceKind = "Namespaces"
+	KindPods                              ResourceKind = "Pods"
+	KindDeployments                       ResourceKind = "Deployments"
+	KindStatefulSets                      ResourceKind = "StatefulSets"
+	KindDaemonSets                        ResourceKind = "DaemonSets"
+	KindServices                          ResourceKind = "Services"
+	KindIngresses                         ResourceKind = "Ingresses"
+	KindServiceAccounts                   ResourceKind = "ServiceAccounts"
+	KindRoles                             ResourceKind = "Roles"
+	KindClusterRoles                      ResourceKind = "ClusterRoles"
+	KindRoleBindings                      ResourceKind = "RoleBindings"
+	KindClusterRoleBindings               ResourceKind = "ClusterRoleBindings"
+	KindNetworkPolicies                   ResourceKind = "NetworkPolicies"
+	KindValidatingAdmissionPolicies       ResourceKind = "ValidatingAdmissionPolicies"
+	KindValidatingAdmissionPolicyBindings ResourceKind = "ValidatingAdmissionPolicyBindings"
+	KindValidatingWebhookConfigurations   ResourceKind = "ValidatingWebhookConfigurations"
 )
 
 var InventoryKinds = []ResourceKind{
@@ -63,6 +69,9 @@ var InventoryKinds = []ResourceKind{
 	KindRoleBindings,
 	KindClusterRoleBindings,
 	KindNetworkPolicies,
+	KindValidatingAdmissionPolicies,
+	KindValidatingAdmissionPolicyBindings,
+	KindValidatingWebhookConfigurations,
 }
 
 type CollectionMetadata struct {
@@ -137,12 +146,32 @@ type PodSecurityContext struct {
 }
 
 type Container struct {
-	Name            string
-	Image           string
-	SecurityContext ContainerSecurityContext
-	VolumeMounts    []VolumeMount
-	Limits          map[string]string
-	Requests        map[string]string
+	Name                       string
+	Image                      string
+	SecurityContext            ContainerSecurityContext
+	VolumeMounts               []VolumeMount
+	Limits                     map[string]string
+	Requests                   map[string]string
+	SecretEnvironmentVariables []SecretEnvironmentVariable
+	SecretEnvironmentSources   []SecretEnvironmentSource
+}
+
+// SecretEnvironmentVariable is a report-safe reference to one Secret key.
+// It deliberately contains no environment or Secret value.
+type SecretEnvironmentVariable struct {
+	Index      int
+	Name       string
+	SecretName string
+	SecretKey  string
+	Optional   *bool
+}
+
+// SecretEnvironmentSource records envFrom.secretRef without Secret contents.
+type SecretEnvironmentSource struct {
+	Index      int
+	Prefix     string
+	SecretName string
+	Optional   *bool
 }
 
 type VolumeMount struct {
@@ -301,6 +330,27 @@ type NetworkPolicyPort struct {
 	EndPort  *int32
 }
 
+type ValidatingAdmissionPolicy struct {
+	Metadata      Metadata
+	FailurePolicy string
+}
+
+type ValidatingAdmissionPolicyBinding struct {
+	Metadata          Metadata
+	PolicyName        string
+	ValidationActions []string
+}
+
+type ValidatingWebhookConfiguration struct {
+	Metadata Metadata
+	Webhooks []ValidatingWebhook
+}
+
+type ValidatingWebhook struct {
+	Name          string
+	FailurePolicy string
+}
+
 func (s ClusterState) Count(kind ResourceKind) int {
 	switch kind {
 	case KindNamespaces:
@@ -329,6 +379,12 @@ func (s ClusterState) Count(kind ResourceKind) int {
 		return len(s.ClusterRoleBindings)
 	case KindNetworkPolicies:
 		return len(s.NetworkPolicies)
+	case KindValidatingAdmissionPolicies:
+		return len(s.ValidatingAdmissionPolicies)
+	case KindValidatingAdmissionPolicyBindings:
+		return len(s.ValidatingAdmissionPolicyBindings)
+	case KindValidatingWebhookConfigurations:
+		return len(s.ValidatingWebhookConfigurations)
 	default:
 		return 0
 	}

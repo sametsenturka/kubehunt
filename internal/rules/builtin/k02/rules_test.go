@@ -31,8 +31,15 @@ func TestEveryK02RuleHasCompleteMetadata(t *testing.T) {
 		if len(metadata.AffectedResourceTypes) != 4 || len(metadata.RequiredCapabilities) != 4 {
 			t.Errorf("rule %s has incomplete RBAC applicability metadata", metadata.ID)
 		}
-		if len(metadata.OWASPMappings) != 1 || metadata.OWASPMappings[0].Type != rules.MappingPrimary || metadata.OWASPMappings[0].Category.ID != "K02" {
+		if len(metadata.OWASPMappings) == 0 || metadata.OWASPMappings[0].Type != rules.MappingPrimary || metadata.OWASPMappings[0].Category.ID != "K02" {
 			t.Errorf("rule %s mappings = %#v", metadata.ID, metadata.OWASPMappings)
+		}
+		if metadata.ID == "KSCAN-K02-003" {
+			if len(metadata.OWASPMappings) != 2 || metadata.OWASPMappings[1].Type != rules.MappingRelated || metadata.OWASPMappings[1].Category.ID != "K03" {
+				t.Errorf("rule %s should include related K03 mapping: %#v", metadata.ID, metadata.OWASPMappings)
+			}
+		} else if len(metadata.OWASPMappings) != 1 {
+			t.Errorf("rule %s unexpected related mappings: %#v", metadata.ID, metadata.OWASPMappings)
 		}
 	}
 	if _, err := engine.New(registered...); err != nil {
