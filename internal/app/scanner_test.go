@@ -14,11 +14,12 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/kube/collectors"
 )
 
-func TestNewScannerRegistersK01ThroughK04Rules(t *testing.T) {
+func TestNewScannerRegistersK01ThroughK06Rules(t *testing.T) {
 	t.Parallel()
 
 	trueValue := true
 	state := domain.ClusterState{
+		Cluster: domain.ClusterMetadata{Name: "test", Server: "https://127.0.0.1:6443"},
 		Namespaces: []domain.Namespace{{Metadata: domain.Metadata{
 			Name: "team-a", Labels: map[string]string{"pod-security.kubernetes.io/enforce": "privileged"},
 		}}},
@@ -38,6 +39,7 @@ func TestNewScannerRegistersK01ThroughK04Rules(t *testing.T) {
 			RoleRef:  domain.RoleReference{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "secret-reader"},
 			Subjects: []domain.Subject{{APIGroup: "rbac.authorization.k8s.io", Kind: "User", Name: "alice"}},
 		}},
+		Services: []domain.Service{{Metadata: domain.Metadata{Name: "public", Namespace: "team-a"}, Type: "LoadBalancer"}},
 	}
 	scanner := NewScanner()
 	if scanner.InitializationError != nil {
@@ -47,7 +49,7 @@ func TestNewScannerRegistersK01ThroughK04Rules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
 	}
-	wanted := map[string]bool{"KSCAN-K01-001": false, "KSCAN-K02-003": false, "KSCAN-K03-001": false, "KSCAN-K04-001": false}
+	wanted := map[string]bool{"KSCAN-K01-001": false, "KSCAN-K02-003": false, "KSCAN-K03-001": false, "KSCAN-K04-001": false, "KSCAN-K05-001": false, "KSCAN-K06-001": false}
 	for _, finding := range findings {
 		if _, exists := wanted[finding.RuleID]; exists {
 			wanted[finding.RuleID] = true
@@ -58,6 +60,52 @@ func TestNewScannerRegistersK01ThroughK04Rules(t *testing.T) {
 			t.Errorf("registered catalog did not produce %s", id)
 		}
 	}
+}
+
+func TestK06FindingActivatesEvidenceBackedExposurePath(t *testing.T) {
+	t.Parallel()
+
+	privileged := true
+	state := domain.ClusterState{
+		Cluster: domain.ClusterMetadata{Name: "test", Server: "https://127.0.0.1:6443"},
+		Pods: []domain.Pod{{
+			Metadata: domain.Metadata{Name: "api", Namespace: "production", Labels: map[string]string{"app": "api"}},
+			Phase:    "Running",
+			Spec: domain.PodSpec{ServiceAccountName: "api", Containers: []domain.Container{{
+				Name: "api", SecurityContext: domain.ContainerSecurityContext{Privileged: &privileged},
+			}}},
+		}},
+		Services:        []domain.Service{{Metadata: domain.Metadata{Name: "api", Namespace: "production"}, Type: "LoadBalancer", Selector: map[string]string{"app": "api"}}},
+		ServiceAccounts: []domain.ServiceAccount{{Metadata: domain.Metadata{Name: "api", Namespace: "production"}}},
+		Roles: []domain.Role{{
+			Metadata: domain.Metadata{Name: "secret-reader", Namespace: "production"},
+			Rules:    []domain.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}},
+		}},
+		RoleBindings: []domain.RoleBinding{{
+			Metadata: domain.Metadata{Name: "secret-reader", Namespace: "production"},
+			RoleRef:  domain.RoleReference{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: "secret-reader"},
+			Subjects: []domain.Subject{{Kind: "ServiceAccount", Namespace: "production", Name: "api"}},
+		}},
+	}
+	scanner := NewScanner()
+	baseFindings, err := scanner.Rules.Evaluate(context.Background(), state)
+	if err != nil {
+		t.Fatalf("evaluate base rules: %v", err)
+	}
+	graph, err := scanner.GraphBuilder.Build(state, baseFindings)
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+	paths, err := scanner.Correlator.Evaluate(context.Background(), graph)
+	if err != nil {
+		t.Fatalf("correlate graph: %v", err)
+	}
+	for _, finding := range paths {
+		if finding.RuleID == "KSCAN-PATH-001" {
+			return
+		}
+	}
+	t.Fatalf("KSCAN-PATH-001 not produced from actual K06 rule findings: base=%#v paths=%#v", baseFindings, paths)
 }
 
 func TestScannerBuildsGraphAndAppendsCorrelatedFindings(t *testing.T) {

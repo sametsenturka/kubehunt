@@ -12,7 +12,10 @@ import (
 	workloadtarget "github.com/sametsenturka/kubehunt/internal/rules/workload"
 )
 
-var category = domain.OWASPCategory{ID: "K01", Version: "2025", Title: "Insecure Workload Configurations"}
+var (
+	category    = domain.OWASPCategory{ID: "K01", Version: "2025", Title: "Insecure Workload Configurations"}
+	categoryK05 = domain.OWASPCategory{ID: "K05", Version: "2025", Title: "Missing Network Segmentation Controls"}
+)
 
 type workloadTarget = workloadtarget.Target
 type namedContainer = workloadtarget.Container
@@ -51,25 +54,31 @@ func Rules() []rules.Rule {
 }
 
 func newRule(id, version, title, description string, severity domain.Severity, remediation string, evaluate func(context.Context, workloadTarget) []domain.Finding) rules.Rule {
-	return workloadRule{
-		metadata: rules.Metadata{
-			ID:                    id,
-			Version:               version,
-			Title:                 title,
-			Description:           description,
-			DefaultSeverity:       severity,
-			AffectedResourceTypes: []string{"Pod", "Deployment", "StatefulSet", "DaemonSet"},
-			RequiredCapabilities:  []domain.CapabilityID{domain.CapabilityPodsList, domain.CapabilityWorkloadTemplatesList},
-			Remediation:           remediation,
-			OWASPMappings: []rules.OWASPMapping{{
-				TaxonomyID: rules.OWASPTaxonomyID,
-				Category:   category,
-				Type:       rules.MappingPrimary,
-				Rationale:  "The rule directly identifies an insecure workload security configuration.",
-			}},
-		},
-		evaluate: evaluate,
+	metadata := rules.Metadata{
+		ID:                    id,
+		Version:               version,
+		Title:                 title,
+		Description:           description,
+		DefaultSeverity:       severity,
+		AffectedResourceTypes: []string{"Pod", "Deployment", "StatefulSet", "DaemonSet"},
+		RequiredCapabilities:  []domain.CapabilityID{domain.CapabilityPodsList, domain.CapabilityWorkloadTemplatesList},
+		Remediation:           remediation,
+		OWASPMappings: []rules.OWASPMapping{{
+			TaxonomyID: rules.OWASPTaxonomyID,
+			Category:   category,
+			Type:       rules.MappingPrimary,
+			Rationale:  "The rule directly identifies an insecure workload security configuration.",
+		}},
 	}
+	if id == "KSCAN-K01-007" {
+		metadata.OWASPMappings = append(metadata.OWASPMappings, rules.OWASPMapping{
+			TaxonomyID: rules.OWASPTaxonomyID,
+			Category:   categoryK05,
+			Type:       rules.MappingRelated,
+			Rationale:  "Host-networked workloads may bypass or receive CNI-specific handling outside ordinary Pod NetworkPolicy enforcement.",
+		})
+	}
+	return workloadRule{metadata: metadata, evaluate: evaluate}
 }
 
 func containers(target workloadTarget) []namedContainer {

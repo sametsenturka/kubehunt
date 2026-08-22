@@ -6,7 +6,7 @@
 </div>
 
 > [!IMPORTANT]
-> KubeHunt is under active development. The current version provides cluster inventory, K01-K04 deterministic checks, and initial evidence-backed attack-path correlation. It does not yet provide JSON/SARIF output, CI severity gates, K05-K10 rules, or prebuilt release binaries.
+> KubeHunt is under active development. The current version provides cluster inventory, K01-K06 deterministic checks, and initial evidence-backed attack-path correlation. It does not yet provide JSON/SARIF output, CI severity gates, K07-K10 rules, or prebuilt release binaries.
 
 ## What KubeHunt does
 
@@ -21,6 +21,8 @@ Current capabilities include:
 - OWASP K02:2025 effective RBAC analysis across subjects, bindings, roles, and permissions.
 - OWASP K03:2025 Secret environment-reference checks without reading Secret values.
 - OWASP K04:2025 Pod Security Admission, ValidatingAdmissionPolicy, and validating webhook checks.
+- OWASP K05:2025 per-Pod native NetworkPolicy isolation and broad allow-rule checks.
+- OWASP K06:2025 potential Service, Ingress, and Kubernetes API endpoint exposure indicators.
 - Analysis of regular and init containers, plus ephemeral containers for K03 Secret environment references.
 - Deduplication of supported controller templates and their child Pods.
 - An in-memory attack graph with stable node identifiers and evidence-bearing semantic edges.
@@ -282,13 +284,42 @@ K04 reports explicit non-enforcing or fail-open admission configuration:
 
 An absent Pod Security Admission label is not automatically a finding because the API server may define cluster-wide defaults that are not visible through ordinary resource collection. Likewise, the absence of a VAP or webhook does not prove that no policy engine exists. K04 results therefore remain partial and do not claim complete policy coverage.
 
+### OWASP K05:2025 — Missing Network Segmentation Controls
+
+K05 evaluates native Kubernetes NetworkPolicy intent independently for ingress and egress. NetworkPolicies are additive, and a Pod is isolated in a direction only when at least one policy selects it and includes that effective policy type.
+
+| Rule | Detection | Default severity |
+| --- | --- | --- |
+| `KSCAN-K05-001` | Active, non-host-network Pod has no ingress-isolating NetworkPolicy | Medium |
+| `KSCAN-K05-002` | Active, non-host-network Pod has no egress-isolating NetworkPolicy | Medium |
+| `KSCAN-K05-003` | Ingress rule omits `from`, allowing its ports from all sources | Medium |
+| `KSCAN-K05-004` | Egress rule omits `to`, allowing its ports to all destinations | Medium |
+
+Empty selectors, match expressions, omitted `policyTypes`, and direction-specific isolation are evaluated explicitly. Succeeded and Failed Pods are excluded. Host-network workloads retain the K01 host-network finding with K05 as a related mapping because CNI treatment of host-network traffic is not portable.
+
+K05 describes native NetworkPolicy configuration intent. KubeHunt does not verify that the installed CNI enforces those policies, nor does it observe runtime flows, node firewalls, service-mesh controls, cloud networking, or vendor policy CRDs.
+
+### OWASP K06:2025 — Overly Exposed Kubernetes Components
+
+K06 emits bounded potential-exposure indicators:
+
+| Rule | Detection | Default severity |
+| --- | --- | --- |
+| `KSCAN-K06-001` | Service type is `LoadBalancer` | Low |
+| `KSCAN-K06-002` | Service type is `NodePort` | Low |
+| `KSCAN-K06-003` | Service declares `externalIPs` | Low |
+| `KSCAN-K06-004` | Ingress declares at least one Service backend route | Low |
+| `KSCAN-K06-005` | Selected API endpoint uses a non-private literal IP address | Medium |
+
+These findings do not claim that a Service, Ingress, or API endpoint is reachable from the Internet. KubeHunt does not resolve endpoint hostnames, probe routes, verify that an Ingress controller exists, or inspect cloud firewalls and authorized-network settings. Kubelet and etcd exposure are not assessed by the current inventory.
+
 ## Attack-path correlation
 
 KubeHunt builds an in-memory directed graph from observed Kubernetes resources. Nodes use stable identifiers; edges have semantic types, confidence, scope, and supporting evidence. No external graph database is required.
 
 | Correlation | Status | Meaning |
 | --- | --- | --- |
-| `KSCAN-PATH-001` | Model implemented; currently dormant | Potential exposure -> privileged workload -> ServiceAccount -> excessive RBAC -> Secret read. It requires a supporting K06 exposure finding, and K06 rules are not implemented yet. |
+| `KSCAN-PATH-001` | Active | Potential exposure -> privileged workload -> ServiceAccount -> excessive RBAC -> Secret read. It requires a K06 potential-exposure finding and confirmed evidence for every graph relationship. |
 | `KSCAN-PATH-002` | Active | Workload -> ServiceAccount -> effective, unconstrained Pod creation permission -> privileged workload creation opportunity. |
 | `KSCAN-PATH-003` | Active | ServiceAccount -> effective RoleBinding/ClusterRoleBinding update or patch permission -> privilege-escalation opportunity. |
 
@@ -390,7 +421,7 @@ CLI
   -> kubeconfig + guarded client-go client
   -> Kubernetes collectors
   -> normalized ClusterState
-  -> deterministic K01-K04 rule engine
+  -> deterministic K01-K06 rule engine
   -> in-memory relationship graph
   -> deterministic attack-path correlator
   -> terminal reporter
@@ -415,8 +446,8 @@ KubeHunt is mapped to OWASP Kubernetes Top 10:2025; it is not “OWASP compliant
 | K02 Overly Permissive Authorization Configurations | Implemented for visible native Kubernetes RBAC; external authorizers and identity membership remain out of scope. |
 | K03 Secrets Management Failures | Partially implemented for Secret-to-environment references and related native RBAC exposure; Secret values, storage, rotation, repositories, images, and logs are not assessed. |
 | K04 Lack of Cluster Level Policy Enforcement | Partially implemented for explicit PSA privileged enforcement, non-denying VAP bindings, and fail-open VAP/webhook settings; cluster defaults and policy-engine CRDs are not assessed. |
-| K05 Missing Network Segmentation Controls | Not assessed. NetworkPolicies are collected and represented in the graph only. |
-| K06 Overly Exposed Kubernetes Components | Not assessed. Services and Ingresses are collected, but Internet reachability is not inferred. |
+| K05 Missing Network Segmentation Controls | Partially implemented for native per-Pod NetworkPolicy intent; CNI enforcement, runtime flows, vendor policy CRDs, and non-Kubernetes network controls are not assessed. |
+| K06 Overly Exposed Kubernetes Components | Partially implemented with potential exposure indicators for Services, Ingresses, and literal API endpoint IPs; Internet reachability, source restrictions, kubelet, and etcd exposure are not assessed. |
 | K07 Misconfigured and Vulnerable Cluster Components | Not assessed. |
 | K08 Cluster to Cloud Lateral Movement | Not assessed. |
 | K09 Broken Authentication Mechanisms | Not assessed. |
@@ -432,8 +463,10 @@ The CLI does not yet emit a formal category coverage report. Until that capabili
 - Secret metadata collection is not implemented, and Secret values are intentionally excluded.
 - K03 does not scan literal environment values because retaining or reporting possible credentials would violate the default data-minimization boundary.
 - K04 cannot prove complete cluster-wide policy coverage from Namespace labels and native admission objects alone.
+- K05 models native NetworkPolicy intent but cannot verify CNI enforcement or observed network reachability.
+- K06 reports potential exposure from explicit configuration and does not claim Internet accessibility.
 - Jobs, CronJobs, and ReplicaSets are not implemented as first-class desired-state targets; K01-specific ephemeral-container checks are also not implemented.
-- Admission policy, runtime behavior, cloud networking, CNI enforcement, control-plane configuration, node configuration, audit pipelines, and verified Internet reachability are not visible.
+- API-server admission defaults, runtime behavior, cloud networking, CNI enforcement, control-plane configuration beyond the selected endpoint, node configuration, audit pipelines, and verified Internet reachability are not visible.
 - Collection failures currently stop the scan with an incomplete-inventory error rather than producing a machine-readable partial-coverage report.
 - A tested Kubernetes version compatibility matrix has not yet been published.
 - Prebuilt, checksummed release artifacts and version stamping are not yet available.
@@ -514,7 +547,7 @@ Near-term work includes:
 - JSON and SARIF 2.1.0 reporters.
 - CI severity thresholds with `--fail-on`.
 - Transparent contextual risk scoring.
-- K05-K06 deterministic rules and activation of the exposure-to-Secret attack path.
+- Broader control-plane, kubelet, etcd, CNI, and cloud-network visibility for deeper K05/K06 coverage.
 - Safe Secret metadata collection without Secret payloads.
 - Versioned, checksummed cross-platform GitHub Releases.
 - A Kubernetes compatibility matrix and integration-test environments.

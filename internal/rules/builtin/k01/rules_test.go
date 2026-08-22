@@ -26,8 +26,15 @@ func TestEveryK01RuleHasCompleteMetadata(t *testing.T) {
 		if len(metadata.AffectedResourceTypes) != 4 || len(metadata.RequiredCapabilities) == 0 {
 			t.Errorf("rule %s has incomplete applicability metadata", metadata.ID)
 		}
-		if len(metadata.OWASPMappings) != 1 || metadata.OWASPMappings[0].Type != rules.MappingPrimary || metadata.OWASPMappings[0].Category.ID != "K01" {
+		if len(metadata.OWASPMappings) == 0 || metadata.OWASPMappings[0].Type != rules.MappingPrimary || metadata.OWASPMappings[0].Category.ID != "K01" {
 			t.Errorf("rule %s mappings = %#v", metadata.ID, metadata.OWASPMappings)
+		}
+		if metadata.ID == "KSCAN-K01-007" {
+			if len(metadata.OWASPMappings) != 2 || metadata.OWASPMappings[1].Type != rules.MappingRelated || metadata.OWASPMappings[1].Category.ID != "K05" {
+				t.Errorf("host-network rule mappings = %#v, want related K05 mapping", metadata.OWASPMappings)
+			}
+		} else if len(metadata.OWASPMappings) != 1 {
+			t.Errorf("rule %s mappings = %#v, want only primary K01", metadata.ID, metadata.OWASPMappings)
 		}
 	}
 	if _, err := engine.New(registered...); err != nil {

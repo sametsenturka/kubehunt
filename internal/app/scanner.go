@@ -16,6 +16,8 @@ import (
 	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k02"
 	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k03"
 	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k04"
+	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k05"
+	"github.com/sametsenturka/kubehunt/internal/rules/builtin/k06"
 	"github.com/sametsenturka/kubehunt/internal/rules/engine"
 )
 
@@ -56,6 +58,8 @@ func NewScanner() *Scanner {
 	registeredRules := append(k01.Rules(), k02.Rules()...)
 	registeredRules = append(registeredRules, k03.Rules()...)
 	registeredRules = append(registeredRules, k04.Rules()...)
+	registeredRules = append(registeredRules, k05.Rules()...)
+	registeredRules = append(registeredRules, k06.Rules()...)
 	ruleEngine, err := engine.New(registeredRules...)
 	return &Scanner{
 		Clients:             kubeclient.DefaultProvider{},
